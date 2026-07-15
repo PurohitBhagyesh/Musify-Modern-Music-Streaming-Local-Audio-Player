@@ -102,7 +102,9 @@ Key Highlights
 
 ✅ Portfolio Ready
 
-Developer
+if you want to check the website visit: https://musifyvibe.netlify.app
+
+Developer:
 
 Bhagyesh Purohit
 
