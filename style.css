@@ -80,6 +80,19 @@ body {
   color: var(--accent-color);
 }
 
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin-logo {
+  animation: spin 8s linear infinite;
+}
+
 .logo h1 {
   font-size: 1.5rem;
   font-weight: 700;
@@ -340,6 +353,11 @@ body {
   justify-content: center;
   color: var(--accent-color);
   font-size: 1.2rem;
+  transition: transform 0.3s ease;
+}
+
+.album-art.playing {
+  animation: spin 5s linear infinite;
 }
 
 .track-details {

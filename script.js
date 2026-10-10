@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const totalDurationEl = document.getElementById('total-duration');
   const playerTitle = document.getElementById('player-title');
   const playerArtist = document.getElementById('player-artist');
+  const albumArt = document.getElementById('player-album-art');
 
   const getSavedFavorites = () => {
     try {
@@ -49,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const formatTime = (seconds) => {
-    if (isNaN(seconds) || seconds === 0) return '0:00';
+    if (isNaN(seconds) || seconds <= 0) return '0:00';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
@@ -80,21 +81,30 @@ document.addEventListener('DOMContentLoaded', () => {
     state.audio.addEventListener('loadedmetadata', () => {
       totalDurationEl.textContent = formatTime(state.audio.duration);
     });
+    state.audio.addEventListener('error', handleAudioError);
 
     seekBar.addEventListener('input', () => {
       if (state.audio.duration) {
         const seekTo = (seekBar.value / 100) * state.audio.duration;
         state.audio.currentTime = seekTo;
+        currentTimeEl.textContent = formatTime(seekTo);
       }
     });
 
     volumeBar.addEventListener('input', (e) => {
       const volume = e.target.value / 100;
-      state.audio.volume = volume;
-      updateVolumeIcon(volume);
+      setVolume(volume);
     });
 
     muteBtn.addEventListener('click', toggleMute);
+    document.addEventListener('keydown', handleKeyboardShortcuts);
+  };
+
+  const handleAudioError = (e) => {
+    console.error('Audio playback error encountered:', e);
+    pauseAudio();
+    playerTitle.textContent = 'Playback Error';
+    playerArtist.textContent = 'Unable to play this file';
   };
 
   const handleFileUpload = (event) => {
@@ -120,6 +130,9 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
+    // Reset file input so re-selecting the same file will trigger change event
+    event.target.value = '';
+
     renderSongList();
     if (state.currentIndex === -1 && state.songs.length > 0) {
       loadTrack(0);
@@ -140,10 +153,19 @@ document.addEventListener('DOMContentLoaded', () => {
     songCountBadge.textContent = `${filteredSongs.length} track${filteredSongs.length !== 1 ? 's' : ''}`;
 
     if (filteredSongs.length === 0) {
+      let emptyMessage = 'No audio files added yet. Upload local audio files to start listening!';
+      if (state.songs.length > 0) {
+        if (state.activeFilter === 'favorites') {
+          emptyMessage = 'No favorite tracks yet. Click the heart icon to add favorites!';
+        } else if (state.searchQuery) {
+          emptyMessage = `No tracks matching "${state.searchQuery}".`;
+        }
+      }
+
       songListContainer.innerHTML = `
         <div class="empty-state">
           <i class="fa-solid fa-music"></i>
-          <p>${state.songs.length === 0 ? 'No audio files added yet. Upload local audio files to start listening!' : 'No matching songs found.'}</p>
+          <p>${emptyMessage}</p>
         </div>
       `;
       return;
@@ -177,8 +199,12 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
 
       itemEl.querySelector('.song-info').addEventListener('click', () => {
-        loadTrack(actualIndex);
-        playAudio();
+        if (actualIndex === state.currentIndex) {
+          togglePlayPause();
+        } else {
+          loadTrack(actualIndex);
+          playAudio();
+        }
       });
 
       itemEl.querySelector('.fav-btn').addEventListener('click', (e) => {
@@ -204,6 +230,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.audio.src = song.url;
     playerTitle.textContent = song.title;
     playerArtist.textContent = song.artist;
+    seekBar.value = 0;
+    currentTimeEl.textContent = '0:00';
 
     renderSongList();
   };
@@ -226,6 +254,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.audio.play().then(() => {
       state.isPlaying = true;
       playBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+      playBtn.setAttribute('title', 'Pause');
+      if (albumArt) albumArt.classList.add('playing');
       renderSongList();
     }).catch((err) => {
       console.error('Audio playback failed:', err);
@@ -236,6 +266,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.audio.pause();
     state.isPlaying = false;
     playBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+    playBtn.setAttribute('title', 'Play');
+    if (albumArt) albumArt.classList.remove('playing');
     renderSongList();
   };
 
@@ -255,7 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const updateProgress = () => {
     const { currentTime, duration } = state.audio;
-    if (duration) {
+    if (duration && !isNaN(duration)) {
       const progressPercent = (currentTime / duration) * 100;
       seekBar.value = progressPercent;
       currentTimeEl.textContent = formatTime(currentTime);
@@ -263,12 +295,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  const setVolume = (value) => {
+    const volume = Math.max(0, Math.min(1, value));
+    state.audio.volume = volume;
+    volumeBar.value = Math.round(volume * 100);
+    if (volume > 0 && state.audio.muted) {
+      state.audio.muted = false;
+    }
+    updateVolumeIcon(volume);
+  };
+
   const toggleMute = () => {
-    state.audio.muted = !state.audio.muted;
     if (state.audio.muted) {
-      muteBtn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
+      state.audio.muted = false;
+      if (state.audio.volume === 0) {
+        setVolume(0.5);
+      } else {
+        updateVolumeIcon(state.audio.volume);
+      }
     } else {
-      updateVolumeIcon(state.audio.volume);
+      state.audio.muted = true;
+      muteBtn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
     }
   };
 
@@ -296,8 +343,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const index = state.songs.findIndex((s) => s.id === id);
     if (index === -1) return;
 
+    const [deletedSong] = state.songs.splice(index, 1);
+    if (deletedSong && deletedSong.url) {
+      URL.revokeObjectURL(deletedSong.url);
+    }
+
+    // Synchronize favorites in localStorage after track deletion
+    const favs = state.songs.filter((s) => s.isFavorite).map((s) => s.title);
+    saveFavorites(favs);
+
     const isCurrentPlaying = index === state.currentIndex;
-    state.songs.splice(index, 1);
 
     if (isCurrentPlaying) {
       pauseAudio();
@@ -305,6 +360,9 @@ document.addEventListener('DOMContentLoaded', () => {
       playerTitle.textContent = 'No track selected';
       playerArtist.textContent = 'Select a song to play';
       state.currentIndex = -1;
+      seekBar.value = 0;
+      currentTimeEl.textContent = '0:00';
+      totalDurationEl.textContent = '0:00';
 
       if (state.songs.length > 0) {
         const nextIdx = index < state.songs.length ? index : 0;
@@ -315,6 +373,51 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     renderSongList();
+  };
+
+  const handleKeyboardShortcuts = (e) => {
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+      return;
+    }
+
+    switch (e.code) {
+      case 'Space':
+        e.preventDefault();
+        togglePlayPause();
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        if (state.audio.duration) {
+          state.audio.currentTime = Math.min(state.audio.duration, state.audio.currentTime + 5);
+        }
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        if (state.audio.duration) {
+          state.audio.currentTime = Math.max(0, state.audio.currentTime - 5);
+        }
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setVolume(state.audio.volume + 0.05);
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        setVolume(state.audio.volume - 0.05);
+        break;
+      case 'KeyM':
+        e.preventDefault();
+        toggleMute();
+        break;
+      case 'KeyN':
+        e.preventDefault();
+        playNextTrack();
+        break;
+      case 'KeyP':
+        e.preventDefault();
+        playPreviousTrack();
+        break;
+    }
   };
 
   initListeners();
